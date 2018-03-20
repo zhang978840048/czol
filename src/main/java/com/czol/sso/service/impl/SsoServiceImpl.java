@@ -25,11 +25,14 @@ public class SsoServiceImpl implements SsoService{
 	private CzUserMapper czUserMapper;
 	@Autowired
 	private JedisClient jedisClient;
+	//redis缓存中添加用户信息的的Key设置
 	@Value("${USER_SESSION}")
 	private String USER_SESSION;
+	//redis中设置用户信息的过期时间
 	@Value("${EXPIRE_TIME}")
 	private Integer EXPIRE_TIME;
 	
+	//检查数据，可通用，比如前台发送ajax检查以及后面注册前的检查
 	@Override
 	public CzolResult checkData(String param,Integer type){
 		CzUserExample example=new CzUserExample();
@@ -51,9 +54,11 @@ public class SsoServiceImpl implements SsoService{
 		return CzolResult.ok(true);
 	}
 	
+	//用户注册
 	@Override
 	public CzolResult register(CzUser user) {
 		//注册之前还得进行检查防止出现重复情况
+		//判断用户名是否为空及重复
 		if(StringUtils.isBlank(user.getuName())){
 			return CzolResult.build(400, "用户名不能为空");
 		}
@@ -61,15 +66,18 @@ public class SsoServiceImpl implements SsoService{
 		if(!(boolean) czolResult.getData()){
 			return CzolResult.build(400, "用户名不能重复");
 		}
+		//检查密码是否为空
 		if(StringUtils.isBlank(user.getuPassword())){
 			return CzolResult.build(400, "密码不能为空");
 		}
+		//检查邮箱是否为空并重复
 		if(StringUtils.isNotBlank(user.getuEmail())){
 			czolResult = this.checkData(user.getuEmail(), 2);
 			if(!(boolean) czolResult.getData()){
 				return CzolResult.build(400, "邮箱重复");
 			}
 		}
+		//检查电话是否为空并重复
 		if(StringUtils.isNotBlank(user.getuTelephone())){
 			czolResult = this.checkData(user.getuTelephone(), 3);
 			if(!(boolean) czolResult.getData()){
@@ -86,7 +94,8 @@ public class SsoServiceImpl implements SsoService{
 		czUserMapper.insert(user);
 		return CzolResult.ok();
 	}
-
+	
+	//用户登录
 	@Override
 	public CzolResult login(String username, String password) {
 		//去除username与数据库中比较
@@ -110,29 +119,41 @@ public class SsoServiceImpl implements SsoService{
 		}
 		//将密码设成null，并将用户信息放入Redis缓存中
 		user.setuPassword(null);
+		//使用json工具将user转换为json对象
 		String jsonUser=JsonUtils.objectToJson(user);
+		//取UUID作为Token
 		String token=UUID.randomUUID().toString().replace("-", "");
+		//向Redis中设置用户信息
 		jedisClient.set(USER_SESSION+":"+token, jsonUser);
+		//设置用户信息过期时间
 		jedisClient.expire(USER_SESSION+":"+token,EXPIRE_TIME);
+		//返回token对象，将向Cookie中写入
 		return CzolResult.ok(token);
 	}
-
+	
+	//使用Token在redis查询用户信息
 	@Override
 	public CzolResult getUserByToken(String token) {
+		//判断Token是否为空
 		if(StringUtils.isBlank(token)){
 			return CzolResult.build(400, "token不能为空");
 		}
+		//从Redis中获取用户信息
 		String string = jedisClient.get(USER_SESSION + ":"+token);
+		//判断用户信息是否为空，假如为空则用户信息已过期，没过期取出并重新设置过期时间
 		if(StringUtils.isBlank(string)){
 			return CzolResult.build(400, "用户信息已过期，请重新登录");
 		}
 		jedisClient.expire(USER_SESSION + ":"+token, EXPIRE_TIME);
+		//使用json工具将json转换为Czuser对象并返回
 		CzUser user = JsonUtils.jsonToPojo(string, CzUser.class);
 		return CzolResult.ok(user);
 	}
 
+	//用户退出
 	@Override
 	public CzolResult logout(String token) {
+		//判断token是否为空，不为空则将对应得value干掉
 		if(StringUtils.isBlank(token)){
 			return CzolResult.build(400, "token不能为空");
 		}
